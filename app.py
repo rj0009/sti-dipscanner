@@ -5,8 +5,7 @@ from datetime import datetime, timedelta
 import time
 import os
 import requests
-from fake_useragent import UserAgent
-import random
+from functools import lru_cache
 
 # Configuration
 GROQ_KEY = os.getenv("GROQ_KEY", "your_groq_key_here")
@@ -20,82 +19,30 @@ STI_STOCKS = [
     "GK8.SI", "S59.SI", "Z78.SI", "NS8U.SI", "5FP.SI"
 ]
 
-# Initialize fake user agent
-ua = UserAgent()
-
-def get_yahoo_session():
-    """Create a session with rotating user agents"""
-    session = requests.Session()
-    
-    # Rotate user agents to avoid detection
-    user_agents = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/115.0'
-    ]
-    
-    # Random user agent
-    session.headers.update({
-        'User-Agent': random.choice(user_agents),
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Cache-Control': 'max-age=0'
-    })
-    
-    return session
-
-def get_stock_data_yahoo(ticker):
-    """Fetch data from Yahoo Finance with advanced bypass techniques"""
-    st.write(f"\n=== FETCHING DATA FOR {ticker} ===")
-    
+# Cache function to avoid repeated Yahoo Finance calls
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def get_cached_stock_data(ticker):
+    """Get stock data with caching to avoid blocking"""
     try:
-        # Use yfinance with custom session
-        session = get_yahoo_session()
-        
-        # Add delay to avoid rate limiting
-        time.sleep(random.uniform(0.5, 1.5))
-        
-        # Create ticker with session
-        stock = yf.Ticker(ticker, session=session)
-        
-        # Try multiple approaches
-        st.write(f"Trying to get data for {ticker}...")
-        
-        # Approach 1: Standard approach
-        hist = stock.history(period="50d", interval="1d", prepost=False)
-        
-        if hist.empty or len(hist) < 2:
-            st.write(f"Empty data from standard approach, trying alternative...")
-            # Approach 2: Try different period
-            hist = stock.history(period="60d", interval="1d", prepost=False)
-            
-        if hist.empty or len(hist) < 2:
-            st.write(f"Still empty data, trying with proxy...")
-            # Approach 3: Try with different parameters
-            hist = stock.history(period="100d", interval="1d", prepost=False)
-            
-        st.write(f"Data shape: {hist.shape}")
+        # Use yfinance with basic approach
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="50d", interval="1d")
         
         if not hist.empty and len(hist) >= 2:
             current_price = hist['Close'].iloc[-1]
             prices = hist['Close'].tolist()
-            st.write(f"✅ SUCCESS: Retrieved {len(prices)} prices for {ticker}")
             return current_price, prices
         else:
-            st.write(f"❌ FAILED: No data retrieved for {ticker}")
-            return None, None
-            
+            # Try alternative approach
+            hist = stock.history(period="60d", interval="1d")
+            if not hist.empty and len(hist) >= 2:
+                current_price = hist['Close'].iloc[-1]
+                prices = hist['Close'].tolist()
+                return current_price, prices
     except Exception as e:
-        st.write(f"❌ EXCEPTION for {ticker}: {str(e)}")
         return None, None
+    
+    return None, None
 
 def calculate_50_day_ma(prices):
     """Calculate 50-day moving average"""
@@ -108,14 +55,14 @@ def calculate_50_day_ma(prices):
     return sum(valid_prices) / len(valid_prices)
 
 # Streamlit UI
-st.set_page_config(layout="wide", page_title="YK's STI DipScanner - YAHOO VERSION")
-st.title("🎯 YK's STI DipScanner - YAHOO FINANCE VERSION")
+st.set_page_config(layout="wide", page_title="YK's STI DipScanner - CACHED VERSION")
+st.title("🎯 YK's STI DipScanner - CACHED VERSION")
 
 # Data disclaimer
 st.caption("⚠️ Data delayed 15+ minutes per SGX policy | Personal use only | Not financial advice")
 
 # Scan button
-if st.button("🔍 Scan STI Stocks Now (Yahoo Finance)"):
+if st.button("🔍 Scan STI Stocks Now (Cached)"):
     progress_bar = st.progress(0)
     status_text = st.empty()
     
@@ -124,7 +71,8 @@ if st.button("🔍 Scan STI Stocks Now (Yahoo Finance)"):
     for i, stock in enumerate(STI_STOCKS):
         status_text.text(f"Scanning {stock} ({i+1}/{len(STI_STOCKS)})")
         
-        current_price, close_prices = get_stock_data_yahoo(stock)
+        # Use cached data retrieval
+        current_price, close_prices = get_cached_stock_data(stock)
         
         if current_price and close_prices and len(close_prices) >= 2:
             ma_50 = calculate_50_day_ma(close_prices)
@@ -181,7 +129,7 @@ if st.button("🔍 Scan STI Stocks Now (Yahoo Finance)"):
             st.write(f"❌ FAILED: No data retrieved for {stock}")
         
         progress_bar.progress((i + 1) / len(STI_STOCKS))
-        time.sleep(2)  # Increased delay to avoid blocking
+        time.sleep(1)  # Reduced delay
     
     # Display results
     st.subheader("🚀 Top Dip Opportunities")
@@ -230,4 +178,4 @@ if st.button("🔍 Scan STI Stocks Now (Yahoo Finance)"):
     st.caption("💡 Tip: Refresh during SGX trading hours (9am-5pm SGT) for latest data")
 
 st.markdown("---")
-st.markdown("📌 Yahoo Finance version with advanced blocking bypass techniques")
+st.markdown("📌 Cached version using Streamlit's caching to bypass Yahoo Finance blocking")
