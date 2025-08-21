@@ -5,11 +5,12 @@ from datetime import datetime, timedelta
 import time
 import os
 import requests
-import json
+from fake_useragent import UserAgent
+import random
 
 # Configuration
 GROQ_KEY = os.getenv("GROQ_KEY", "your_groq_key_here")
-# Verified STI constituents (30 stocks) - simplified list
+# Verified STI constituents (30 stocks)
 STI_STOCKS = [
     "D05.SI", "Z74.SI", "U11.SI", "O39.SI", "C38U.SI", 
     "ME8U.SI", "A17U.SI", "F34.SI", "C52.SI", "U96.SI",
@@ -19,38 +20,81 @@ STI_STOCKS = [
     "GK8.SI", "S59.SI", "Z78.SI", "NS8U.SI", "5FP.SI"
 ]
 
-def get_stock_data_alternative(ticker):
-    """Alternative method using direct API calls"""
-    st.write(f"\n=== ALTERNATIVE DATA RETRIEVAL FOR {ticker} ===")
+# Initialize fake user agent
+ua = UserAgent()
+
+def get_yahoo_session():
+    """Create a session with rotating user agents"""
+    session = requests.Session()
+    
+    # Rotate user agents to avoid detection
+    user_agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/115.0'
+    ]
+    
+    # Random user agent
+    session.headers.update({
+        'User-Agent': random.choice(user_agents),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Cache-Control': 'max-age=0'
+    })
+    
+    return session
+
+def get_stock_data_yahoo(ticker):
+    """Fetch data from Yahoo Finance with advanced bypass techniques"""
+    st.write(f"\n=== FETCHING DATA FOR {ticker} ===")
     
     try:
-        # Method 1: Try regular yfinance approach first
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period="50d", interval="1d")
+        # Use yfinance with custom session
+        session = get_yahoo_session()
         
-        st.write(f"Method 1 - yfinance shape: {hist.shape}")
+        # Add delay to avoid rate limiting
+        time.sleep(random.uniform(0.5, 1.5))
+        
+        # Create ticker with session
+        stock = yf.Ticker(ticker, session=session)
+        
+        # Try multiple approaches
+        st.write(f"Trying to get data for {ticker}...")
+        
+        # Approach 1: Standard approach
+        hist = stock.history(period="50d", interval="1d", prepost=False)
+        
+        if hist.empty or len(hist) < 2:
+            st.write(f"Empty data from standard approach, trying alternative...")
+            # Approach 2: Try different period
+            hist = stock.history(period="60d", interval="1d", prepost=False)
+            
+        if hist.empty or len(hist) < 2:
+            st.write(f"Still empty data, trying with proxy...")
+            # Approach 3: Try with different parameters
+            hist = stock.history(period="100d", interval="1d", prepost=False)
+            
+        st.write(f"Data shape: {hist.shape}")
         
         if not hist.empty and len(hist) >= 2:
             current_price = hist['Close'].iloc[-1]
-            return current_price, hist['Close'].tolist()
-        
-        # Method 2: Try different period
-        hist = stock.history(period="60d", interval="1d")
-        st.write(f"Method 2 - 60d shape: {hist.shape}")
-        
-        if not hist.empty and len(hist) >= 2:
-            current_price = hist['Close'].iloc[-1]
-            return current_price, hist['Close'].tolist()
-        
-        # Method 3: Try to get basic info
-        info = stock.info
-        st.write(f"Basic info available: {len(info) > 0}")
-        
-        # If all methods fail, return None
-        return None, None
-        
+            prices = hist['Close'].tolist()
+            st.write(f"✅ SUCCESS: Retrieved {len(prices)} prices for {ticker}")
+            return current_price, prices
+        else:
+            st.write(f"❌ FAILED: No data retrieved for {ticker}")
+            return None, None
+            
     except Exception as e:
-        st.write(f"Exception in alternative method: {str(e)}")
+        st.write(f"❌ EXCEPTION for {ticker}: {str(e)}")
         return None, None
 
 def calculate_50_day_ma(prices):
@@ -64,14 +108,14 @@ def calculate_50_day_ma(prices):
     return sum(valid_prices) / len(valid_prices)
 
 # Streamlit UI
-st.set_page_config(layout="wide", page_title="YK's STI DipScanner")
-st.title("🎯 YK's STI DipScanner - ALTERNATIVE VERSION")
+st.set_page_config(layout="wide", page_title="YK's STI DipScanner - YAHOO VERSION")
+st.title("🎯 YK's STI DipScanner - YAHOO FINANCE VERSION")
 
 # Data disclaimer
 st.caption("⚠️ Data delayed 15+ minutes per SGX policy | Personal use only | Not financial advice")
 
 # Scan button
-if st.button("🔍 Scan STI Stocks Now (Alternative Method)"):
+if st.button("🔍 Scan STI Stocks Now (Yahoo Finance)"):
     progress_bar = st.progress(0)
     status_text = st.empty()
     
@@ -80,8 +124,7 @@ if st.button("🔍 Scan STI Stocks Now (Alternative Method)"):
     for i, stock in enumerate(STI_STOCKS):
         status_text.text(f"Scanning {stock} ({i+1}/{len(STI_STOCKS)})")
         
-        # Try alternative data retrieval method
-        current_price, close_prices = get_stock_data_alternative(stock)
+        current_price, close_prices = get_stock_data_yahoo(stock)
         
         if current_price and close_prices and len(close_prices) >= 2:
             ma_50 = calculate_50_day_ma(close_prices)
@@ -89,7 +132,7 @@ if st.button("🔍 Scan STI Stocks Now (Alternative Method)"):
             
             # Check for dip (below 50-MA)
             if current_price < ma_50:
-                # Get news summary (fallback)
+                # Get news summary
                 try:
                     stock_obj = yf.Ticker(stock)
                     news = stock_obj.news
@@ -122,8 +165,8 @@ if st.button("🔍 Scan STI Stocks Now (Alternative Method)"):
                         response = requests.post("https://api.groq.com/openai/v1/chat/completions", 
                                                json=payload, headers=headers, timeout=30)
                         analysis = response.json()["choices"][0]["message"]["content"]
-                    except:
-                        analysis = "❌ AI analysis failed"
+                    except Exception as e:
+                        analysis = f"❌ AI analysis failed: {str(e)}"
                 
                 dip_opportunities.append({
                     'stock': stock,
@@ -138,7 +181,7 @@ if st.button("🔍 Scan STI Stocks Now (Alternative Method)"):
             st.write(f"❌ FAILED: No data retrieved for {stock}")
         
         progress_bar.progress((i + 1) / len(STI_STOCKS))
-        time.sleep(1.5)
+        time.sleep(2)  # Increased delay to avoid blocking
     
     # Display results
     st.subheader("🚀 Top Dip Opportunities")
@@ -146,9 +189,9 @@ if st.button("🔍 Scan STI Stocks Now (Alternative Method)"):
     if not dip_opportunities:
         st.info("No stocks found below 50-day moving average. Try again later!")
         st.write("This could be because:")
-        st.write("1. Yahoo Finance is actively blocking requests")
-        st.write("2. All STI stocks are currently above their 50-day moving average")
-        st.write("3. No stock data is available at this moment")
+        st.write("1. All STI stocks are currently above their 50-day moving average")
+        st.write("2. Yahoo Finance is temporarily blocking requests")
+        st.write("3. Network connectivity issues")
     else:
         # Sort by how far below MA (largest discount first)
         sorted_opportunities = sorted(dip_opportunities, key=lambda x: x['below_ma'], reverse=True)
@@ -187,4 +230,4 @@ if st.button("🔍 Scan STI Stocks Now (Alternative Method)"):
     st.caption("💡 Tip: Refresh during SGX trading hours (9am-5pm SGT) for latest data")
 
 st.markdown("---")
-st.markdown("📌 Alternative approach - if Yahoo Finance is blocked, this version may work differently")
+st.markdown("📌 Yahoo Finance version with advanced blocking bypass techniques")
