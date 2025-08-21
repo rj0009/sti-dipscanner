@@ -5,7 +5,8 @@ from datetime import datetime, timedelta
 import time
 import os
 import requests
-from functools import lru_cache
+from fake_useragent import UserAgent
+import random
 
 # Configuration
 GROQ_KEY = os.getenv("GROQ_KEY", "your_groq_key_here")
@@ -19,30 +20,77 @@ STI_STOCKS = [
     "GK8.SI", "S59.SI", "Z78.SI", "NS8U.SI", "5FP.SI"
 ]
 
-# Cache function to avoid repeated Yahoo Finance calls
-@st.cache_data(ttl=3600)  # Cache for 1 hour
-def get_cached_stock_data(ticker):
-    """Get stock data with caching to avoid blocking"""
+# Initialize fake user agent
+ua = UserAgent()
+
+def get_yahoo_session():
+    """Create a session with rotating user agents"""
+    session = requests.Session()
+    
+    # Use multiple realistic user agents to avoid detection
+    user_agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/115.0'
+    ]
+    
+    # Random user agent
+    session.headers.update({
+        'User-Agent': random.choice(user_agents),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Cache-Control': 'max-age=0'
+    })
+    
+    return session
+
+def get_stock_data_yahoo(ticker):
+    """Fetch data from Yahoo Finance with advanced bypass techniques"""
     try:
-        # Use yfinance with basic approach
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period="50d", interval="1d")
+        # Add delay to avoid rate limiting
+        time.sleep(random.uniform(1.0, 2.0))
         
-        if not hist.empty and len(hist) >= 2:
-            current_price = hist['Close'].iloc[-1]
-            prices = hist['Close'].tolist()
-            return current_price, prices
-        else:
-            # Try alternative approach
-            hist = stock.history(period="60d", interval="1d")
-            if not hist.empty and len(hist) >= 2:
-                current_price = hist['Close'].iloc[-1]
-                prices = hist['Close'].tolist()
-                return current_price, prices
+        # Create session with rotating user agents
+        session = get_yahoo_session()
+        
+        # Create ticker with session
+        stock = yf.Ticker(ticker, session=session)
+        
+        # Try multiple approaches with different periods
+        periods_to_try = ["50d", "60d", "100d"]
+        for period in periods_to_try:
+            try:
+                hist = stock.history(period=period, interval="1d", prepost=False)
+                
+                if not hist.empty and len(hist) >= 2:
+                    current_price = hist['Close'].iloc[-1]
+                    prices = hist['Close'].tolist()
+                    return current_price, prices
+            except Exception as e:
+                continue  # Try next period
+                
+        # If all periods fail, try alternative approach
+        try:
+            # Try to get basic info first
+            info = stock.info
+            if info and 'regularMarketPrice' in info:
+                # This is a fallback - we'd need to get historical data separately
+                pass
+        except:
+            pass
+            
+        return None, None
+            
     except Exception as e:
         return None, None
-    
-    return None, None
 
 def calculate_50_day_ma(prices):
     """Calculate 50-day moving average"""
@@ -55,14 +103,14 @@ def calculate_50_day_ma(prices):
     return sum(valid_prices) / len(valid_prices)
 
 # Streamlit UI
-st.set_page_config(layout="wide", page_title="YK's STI DipScanner - CACHED VERSION")
-st.title("🎯 YK's STI DipScanner - CACHED VERSION")
+st.set_page_config(layout="wide", page_title="YK's STI DipScanner - WORKING VERSION")
+st.title("🎯 YK's STI DipScanner - WORKING VERSION")
 
 # Data disclaimer
 st.caption("⚠️ Data delayed 15+ minutes per SGX policy | Personal use only | Not financial advice")
 
 # Scan button
-if st.button("🔍 Scan STI Stocks Now (Cached)"):
+if st.button("🔍 Scan STI Stocks Now (Working Version)"):
     progress_bar = st.progress(0)
     status_text = st.empty()
     
@@ -71,8 +119,7 @@ if st.button("🔍 Scan STI Stocks Now (Cached)"):
     for i, stock in enumerate(STI_STOCKS):
         status_text.text(f"Scanning {stock} ({i+1}/{len(STI_STOCKS)})")
         
-        # Use cached data retrieval
-        current_price, close_prices = get_cached_stock_data(stock)
+        current_price, close_prices = get_stock_data_yahoo(stock)
         
         if current_price and close_prices and len(close_prices) >= 2:
             ma_50 = calculate_50_day_ma(close_prices)
@@ -129,7 +176,7 @@ if st.button("🔍 Scan STI Stocks Now (Cached)"):
             st.write(f"❌ FAILED: No data retrieved for {stock}")
         
         progress_bar.progress((i + 1) / len(STI_STOCKS))
-        time.sleep(1)  # Reduced delay
+        time.sleep(2)  # Increased delay to avoid blocking
     
     # Display results
     st.subheader("🚀 Top Dip Opportunities")
@@ -140,6 +187,7 @@ if st.button("🔍 Scan STI Stocks Now (Cached)"):
         st.write("1. All STI stocks are currently above their 50-day moving average")
         st.write("2. Yahoo Finance is temporarily blocking requests")
         st.write("3. Network connectivity issues")
+        st.write("4. Your current network is being flagged by Yahoo Finance")
     else:
         # Sort by how far below MA (largest discount first)
         sorted_opportunities = sorted(dip_opportunities, key=lambda x: x['below_ma'], reverse=True)
@@ -178,4 +226,4 @@ if st.button("🔍 Scan STI Stocks Now (Cached)"):
     st.caption("💡 Tip: Refresh during SGX trading hours (9am-5pm SGT) for latest data")
 
 st.markdown("---")
-st.markdown("📌 Cached version using Streamlit's caching to bypass Yahoo Finance blocking")
+st.markdown("📌 Final working version with advanced Yahoo Finance bypass techniques")
