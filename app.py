@@ -8,7 +8,6 @@ import requests
 
 # Configuration
 GROQ_KEY = os.getenv("GROQ_KEY", "your_groq_key_here")
-# Verified STI constituents (30 stocks)
 STI_STOCKS = [
     "D05.SI", "Z74.SI", "U11.SI", "O39.SI", "C38U.SI", 
     "ME8U.SI", "A17U.SI", "F34.SI", "C52.SI", "U96.SI",
@@ -19,134 +18,160 @@ STI_STOCKS = [
 ]
 
 def get_stock_data(ticker):
-    """Fetch data using yfinance with comprehensive debugging"""
-    st.write(f"\n=== FETCHING DATA FOR {ticker} ===")
+    """Fetch data with Cloudflare bypass techniques"""
+    # Use a different User-Agent that's less likely to be blocked
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    })
     
     try:
-        # Create session with headers
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        })
+        # Use Yahoo Finance's API directly (less likely to be blocked)
+        api_url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={ticker}"
+        api_response = session.get(api_url, timeout=10)
         
-        st.write(f"Attempting to create yf.Ticker object for {ticker}")
-        stock = yf.Ticker(ticker, session=session)
-        
-        st.write(f"Attempting to get historical data for {ticker}")
-        hist = stock.history(period="50d", interval="1d")
-        
-        st.write(f"Historical data shape: {hist.shape}")
-        st.write(f"Is history empty? {hist.empty}")
-        
-        if hist.empty:
-            st.write("Empty history returned")
+        if api_response.status_code != 200:
             return None, None
             
-        if len(hist) < 2:
-            st.write(f"Insufficient data points: {len(hist)}")
+        # Get historical data using the API
+        hist = yf.download(ticker, period="50d", interval="1d", session=session)
+        
+        if hist.empty or len(hist) < 2:
             return None, None
             
         current_price = hist['Close'].iloc[-1]
-        st.write(f"Current price: {current_price}")
-        st.write(f"First 5 closing prices: {hist['Close'].head().tolist()}")
-        
         return current_price, hist['Close'].tolist()
         
     except Exception as e:
-        st.write(f"Exception occurred: {str(e)}")
         return None, None
 
 def calculate_50_day_ma(prices):
-    """Calculate 50-day moving average with debugging"""
-    st.write(f"\n=== CALCULATING 50-DAY MA ===")
-    st.write(f"Number of prices: {len(prices)}")
-    
+    """Calculate 50-day moving average"""
     valid_prices = [p for p in prices if pd.notna(p)]
-    st.write(f"Valid prices count: {len(valid_prices)}")
-    
     if not valid_prices:
-        st.write("No valid prices found")
         return 0
         
     if len(valid_prices) >= 50:
-        ma = sum(valid_prices[-50:]) / 50
-        st.write(f"50-day MA: {ma}")
-        return ma
-        
-    ma = sum(valid_prices) / len(valid_prices)
-    st.write(f"MA with {len(valid_prices)} days: {ma}")
-    return ma
+        return sum(valid_prices[-50:]) / 50
+    return sum(valid_prices) / len(valid_prices)
 
-# Streamlit UI - DEBUG MODE
-st.set_page_config(layout="wide", page_title="YK's STI DipScanner - DEBUG")
-st.title("🎯 YK's STI DipScanner - DEBUG MODE")
-
-# Display environment info
-st.subheader("Environment Information")
-st.write(f"Streamlit version: {st.__version__}")
-st.write(f"yfinance version: {yf.__version__}")
-st.write(f"Pandas version: {pd.__version__}")
+# Streamlit UI
+st.set_page_config(layout="wide", page_title="YK's STI DipScanner")
+st.title("🎯 YK's STI DipScanner")
 
 # Data disclaimer
 st.caption("⚠️ Data delayed 15+ minutes per SGX policy | Personal use only | Not financial advice")
 
 # Scan button
-if st.button("🔍 Scan STI Stocks Now (DEBUG)"):
+if st.button("🔍 Scan STI Stocks Now"):
     progress_bar = st.progress(0)
     status_text = st.empty()
     
     dip_opportunities = []
-    failed_tickers = []
     
     for i, stock in enumerate(STI_STOCKS):
         status_text.text(f"Scanning {stock} ({i+1}/{len(STI_STOCKS)})")
         
-        st.write(f"\n{'='*50}")
-        st.write(f"PROCESSING: {stock}")
-        st.write(f"{'='*50}")
-        
         current_price, close_prices = get_stock_data(stock)
-        
         if current_price and close_prices and len(close_prices) >= 2:
-            st.write(f"✅ SUCCESS: Retrieved data for {stock}")
-            
             ma_50 = calculate_50_day_ma(close_prices)
             below_ma_pct = round(((ma_50 - current_price) / ma_50) * 100, 1)
-            st.write(f"📊 50-MA: {ma_50}, Current: {current_price}, Below MA: {below_ma_pct}%")
             
             # Check for dip (below 50-MA)
             if current_price < ma_50:
-                st.write(f"🎯 DIP FOUND: {stock} is {below_ma_pct}% below 50-MA")
+                # Get news summary
+                try:
+                    stock_obj = yf.Ticker(stock)
+                    news = stock_obj.news
+                    news_summary = " | ".join([item['title'] for item in news[:3]]) if news else "No recent news"
+                except:
+                    news_summary = "News unavailable"
+                
+                # Get guru analysis
+                import requests
+                if not GROQ_KEY or GROQ_KEY == "your_groq_key_here":
+                    analysis = "❌ GROQ_KEY not set"
+                else:
+                    payload = {
+                        "model": "mixtral-8x7b-32768",
+                        "messages": [{"role": "user", "content": f"""
+                        Role: SGX hedge fund manager. Analyze {stock} at S${current_price:.2f} ({below_ma_pct}% below 50-MA). 
+                        Recent news: {news_summary[:500]}... 
+                        Output ONLY:
+                        ✅ VERDICT: [BUY/HOLD/AVOID]
+                        🎯 1-WEEK TARGET: [PRICE]
+                        ⚠️ KEY RISK: [1 sentence]
+                        💡 ACTION: [Concise step]
+                        """}]
+                    }
+                    headers = {
+                        "Authorization": f"Bearer {GROQ_KEY}",
+                        "Content-Type": "application/json"
+                    }
+                    try:
+                        response = requests.post("https://api.groq.com/openai/v1/chat/completions", 
+                                               json=payload, headers=headers, timeout=30)
+                        analysis = response.json()["choices"][0]["message"]["content"]
+                    except:
+                        analysis = "❌ AI analysis failed"
+                
                 dip_opportunities.append({
                     'stock': stock,
                     'price': current_price,
                     'ma_50': ma_50,
                     'below_ma': below_ma_pct,
+                    'analysis': analysis
                 })
-            else:
-                st.write(f"📈 NO DIP: {stock} is above 50-MA")
-        else:
-            st.write(f"❌ FAILED: No data retrieved for {stock}")
-            failed_tickers.append(stock)
         
         progress_bar.progress((i + 1) / len(STI_STOCKS))
-        time.sleep(1.5)
+        time.sleep(2)  # Slower rate to avoid blocking
     
     # Display results
-    st.subheader("Results")
-    
-    st.write(f"✅ Successful: {len(dip_opportunities)} stocks")
-    st.write(f"❌ Failed: {len(failed_tickers)} stocks")
-    
-    if failed_tickers:
-        st.write("Failed tickers:", ", ".join(failed_tickers))
+    st.subheader("🚀 Top Dip Opportunities")
     
     if not dip_opportunities:
-        st.info("No stocks found below 50-day moving average")
+        st.info("No stocks found below 50-day moving average. Try again later!")
     else:
-        st.success(f"Found {len(dip_opportunities)} stocks below 50-day MA!")
-        for opp in dip_opportunities:
-            st.write(f"{opp['stock']}: S${opp['price']:.2f} ({opp['below_ma']}% below)")
+        # Sort by how far below MA (largest discount first)
+        sorted_opportunities = sorted(dip_opportunities, key=lambda x: x['below_ma'], reverse=True)
+        
+        for opp in sorted_opportunities:
+            # Parse guru analysis
+            lines = opp['analysis'].split('\n')
+            verdict = next((l for l in lines if l.startswith("✅ VERDICT")), "✅ VERDICT: HOLD")
+            target = next((l for l in lines if l.startswith("🎯 1-WEEK TARGET")), "🎯 1-WEEK TARGET: N/A")
+            risk = next((l for l in lines if l.startswith("⚠️ KEY RISK")), "⚠️ KEY RISK: Market volatility")
+            action = next((l for l in lines if l.startswith("💡 ACTION")), "💡 ACTION: Monitor")
+            
+            # Color-coded card
+            color = "green" if "BUY" in verdict else "orange" if "HOLD" in verdict else "red"
+            bg_color = "#f0fff0" if "BUY" in verdict else "#fffaf0" if "HOLD" in verdict else "#fff0f0"
+            
+            st.markdown(f"""
+<div style="background: {bg_color}; border: 2px solid {color}; border-radius: 10px; padding: 15px; margin: 10px 0;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h4 style="color: #333; margin: 0;">{opp['stock']} - S${opp['price']:.2f}</h4>
+        <span style="background: {color}; color: white; padding: 3px 8px; border-radius: 12px; font-size: 0.9em;">
+            🔻{opp['below_ma']}%
+        </span>
+    </div>
+    <p style="color: {color}; font-weight: bold; margin: 8px 0;">{verdict}</p>
+    <p style="margin: 5px 0;">{target}</p>
+    <p style="margin: 5px 0;">{risk}</p>
+    <p style="margin: 5px 0;">{action}</p>
+    <p style="font-size: 0.8em; color: #666; margin: 5px 0;">
+        50-MA: S${opp['ma_50']:.2f}
+    </p>
+</div>
+""", unsafe_allow_html=True)
     
     status_text.text(f"Scan complete! Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    st.caption("💡 Tip: Refresh during SGX trading hours (9am-5pm SGT) for latest data")
+
+st.markdown("---")
+st.markdown("📌 **How it works**: Scans all 30 STI stocks for 50-day MA breaches → Uses Groq AI for trading advice → Presents Netflix-style recommendations")
