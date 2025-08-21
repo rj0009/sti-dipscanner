@@ -7,13 +7,14 @@ import os
 
 # Configuration
 GROQ_KEY = os.getenv("GROQ_KEY", "your_groq_key_here")
+# Verified STI constituents (30 stocks)
 STI_STOCKS = [
     "D05.SI", "Z74.SI", "U11.SI", "O39.SI", "C38U.SI", 
-    "ME8U.SI", "J69U.SI", "C09.SI", "A17U.SI", "F34.SI",
-    "C52.SI", "U96.SI", "D01.SI", "BN4.SI", "O2GA.SI",
-    "BMK.SI", "C6L.SI", "F911.SI", "H78.SI", "K71U.SI",
-    "N2IU.SI", "S58.SI", "S68.SI", "S63U.SI", "T39.SI",
-    "Y92.SI", "C31.SI", "GK8.SI", "S59.SI", "Z78.SI"
+    "ME8U.SI", "A17U.SI", "F34.SI", "C52.SI", "U96.SI",
+    "D01.SI", "BN4.SI", "O2GA.SI", "BMK.SI", "C6L.SI",
+    "F911.SI", "H78.SI", "K71U.SI", "N2IU.SI", "S58.SI",
+    "S68.SI", "S63U.SI", "T39.SI", "Y92.SI", "C31.SI",
+    "GK8.SI", "S59.SI", "Z78.SI", "NS8U.SI", "5FP.SI"
 ]
 
 def get_stock_data(ticker):
@@ -22,20 +23,19 @@ def get_stock_data(ticker):
         stock = yf.Ticker(ticker)
         # Get 50-day history for MA calculation
         hist = stock.history(period="50d")
-        if len(hist) < 2:
+        if len(hist) < 2 or hist['Close'].isna().all():
             return None, None
         # Get current price (last close)
         current_price = hist['Close'].iloc[-1]
         return current_price, hist['Close'].tolist()
     except Exception as e:
-        st.warning(f"⚠️ {ticker}: {str(e)}")
         return None, None
 
 def calculate_50_day_ma(prices):
     """Calculate 50-day moving average"""
     if len(prices) >= 50:
-        return sum(prices) / 50
-    return sum(prices) / len(prices) if prices else 0
+        return sum(p for p in prices if pd.notna(p)) / 50
+    return sum(p for p in prices if pd.notna(p)) / len([p for p in prices if pd.notna(p)]) if prices else 0
 
 def guru_analysis(stock, price, below_ma, news):
     """Get Groq-powered trading advice"""
@@ -91,7 +91,7 @@ if st.button("🔍 Scan STI Stocks Now"):
             below_ma_pct = round(((ma_50 - current_price) / ma_50) * 100, 1)
             
             # Check for dip (below 50-MA)
-            if current_price < ma_50 * 1.02:
+            if current_price < ma_50:
                 # Get news summary
                 try:
                     stock_obj = yf.Ticker(stock)
