@@ -92,7 +92,7 @@ if st.button("🔍 Scan STI Stocks Now"):
             below_ma_pct = round(((ma_50 - current_price) / ma_50) * 100, 1)
             
             # Check for dip (below 50-MA)
-            if current_price < ma_50:
+            if current_price < (ma_50*1.02):
                 # Get news summary
                 try:
                     stock_obj = yf.Ticker(stock)
