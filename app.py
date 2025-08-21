@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 import time
 import os
 import random
+import requests
+from bs4 import BeautifulSoup
 
 # Configuration
 GROQ_KEY = os.getenv("GROQ_KEY", "your_groq_key_here")
@@ -18,44 +20,65 @@ STI_STOCKS = [
     "GK8.SI", "S59.SI", "Z78.SI", "NS8U.SI", "5FP.SI"
 ]
 
+def get_yahoo_session():
+    """Create a session with proper headers to avoid being blocked by Yahoo"""
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Connection': 'keep-alive',
+        'DNT': '1',
+        'Upgrade-Insecure-Requests': '1'
+    })
+    return session
+
 def get_stock_data(ticker):
-    """Fetch data using yfinance with enhanced error handling"""
-    # Add random delay to avoid rate limiting
-    time.sleep(random.uniform(1.0, 2.0))
+    """Fetch data using yfinance with robust error handling and retries"""
+    session = get_yahoo_session()
     
-    try:
-        # Create session with headers to mimic browser
-        import requests
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
-        
-        # Try to get data with session
-        stock = yf.Ticker(ticker, session=session)
-        hist = stock.history(period="50d", interval="1d")
-        
-        if hist.empty or len(hist) < 2:
-            return None, None
+    for attempt in range(3):  # Try up to 3 times
+        try:
+            # First, verify the ticker exists by checking Yahoo Finance directly
+            ticker_url = f"https://finance.yahoo.com/quote/{ticker}"
+            response = session.get(ticker_url)
             
-        current_price = hist['Close'].iloc[-1]
-        return current_price, hist['Close'].tolist()
-        
-    except Exception as e:
-        return None, None
+            if response.status_code != 200 or "Symbol Lookup" in response.text:
+                return None, None
+                
+            # If ticker exists, get the data
+            stock = yf.Ticker(ticker, session=session)
+            hist = stock.history(period="50d", interval="1d")
+            
+            if hist.empty or len(hist) < 2:
+                time.sleep(2 ** attempt)  # Exponential backoff
+                continue
+                
+            current_price = hist['Close'].iloc[-1]
+            return current_price, hist['Close'].tolist()
+            
+        except Exception as e:
+            time.sleep(2 ** attempt)  # Exponential backoff
+            continue
+            
+    return None, None
 
 def calculate_50_day_ma(prices):
     """Calculate 50-day moving average"""
-    if len(prices) >= 50:
-        return sum(p for p in prices if pd.notna(p)) / 50
-    return sum(p for p in prices if pd.notna(p)) / len([p for p in prices if pd.notna(p)]) if prices else 0
+    valid_prices = [p for p in prices if pd.notna(p)]
+    if not valid_prices:
+        return 0
+        
+    if len(valid_prices) >= 50:
+        return sum(valid_prices[-50:]) / 50
+    return sum(valid_prices) / len(valid_prices)
 
 def guru_analysis(stock, price, below_ma, news):
     """Get Groq-powered trading advice"""
     import requests
     
-    if not GROQ_KEY or GROQ_KEY == "your_groq_key_here":
-        return "❌ GROQ_KEY not set. Go to Settings → Secrets"
+    if not GROQ_KEY or GROQ_KEY == "your_groq_key_here" or "your_groq_key_here" in GROQ_KEY:
+        return "❌ GROQ_KEY not set properly. Go to Settings → Secrets"
         
     payload = {
         "model": "mixtral-8x7b-32768",
@@ -94,6 +117,7 @@ if st.button("🔍 Scan STI Stocks Now"):
     status_text = st.empty()
     
     dip_opportunities = []
+    failed_tickers = []
     
     for i, stock in enumerate(STI_STOCKS):
         status_text.text(f"Scanning {stock} ({i+1}/{len(STI_STOCKS)})")
@@ -107,7 +131,7 @@ if st.button("🔍 Scan STI Stocks Now"):
             if current_price < ma_50:
                 # Get news summary
                 try:
-                    stock_obj = yf.Ticker(stock)
+                    stock_obj = yf.Ticker(stock, session=get_yahoo_session())
                     news = stock_obj.news
                     news_summary = " | ".join([item['title'] for item in news[:3]]) if news else "No recent news"
                 except:
@@ -123,32 +147,41 @@ if st.button("🔍 Scan STI Stocks Now"):
                     'below_ma': below_ma_pct,
                     'analysis': analysis
                 })
+        else:
+            failed_tickers.append(stock)
         
         progress_bar.progress((i + 1) / len(STI_STOCKS))
-        time.sleep(1.5)
+        time.sleep(1.5)  # Be gentle with Yahoo's servers
     
     # Display results
     st.subheader("🚀 Top Dip Opportunities")
     
     if not dip_opportunities:
         st.info("No stocks found below 50-day moving average. Try again later!")
-    else:
-        # Sort by how far below MA (largest discount first)
-        sorted_opportunities = sorted(dip_opportunities, key=lambda x: x['below_ma'], reverse=True)
+    
+    # Show failed tickers for debugging
+    if failed_tickers:
+        with st.expander("🔍 Debug: Failed Tickers"):
+            st.write(f"Failed to retrieve data for: {', '.join(failed_tickers)}")
+            st.write("This is often temporary - try again in a few minutes.")
+    
+    # Sort by how far below MA (largest discount first)
+    sorted_opportunities = sorted(dip_opportunities, key=lambda x: x['below_ma'], reverse=True)
+    
+    for opp in sorted_opportunities:
+        # Parse guru analysis
+        lines = opp['analysis'].split('\n')
+        verdict = next((l for l in lines if l.startswith("✅ VERDICT")), "✅ VERDICT: HOLD")
+        target = next((l for l in lines if l.startswith("🎯 1-WEEK TARGET")), "🎯 1-WEEK TARGET: N/A")
+        risk = next((l for l in lines if l.startswith("⚠️ KEY RISK")), "⚠️ KEY RISK: Market volatility")
+        action = next((l for l in lines if l.startswith("💡 ACTION")), "💡 ACTION: Monitor")
         
-        for opp in sorted_opportunities:
-            # Parse guru analysis
-            lines = opp['analysis'].split('\n')
-            verdict = next((l for l in lines if l.startswith("✅ VERDICT")), "✅ VERDICT: HOLD")
-            target = next((l for l in lines if l.startswith("🎯 1-WEEK TARGET")), "🎯 1-WEEK TARGET: N/A")
-            risk = next((l for l in lines if l.startswith("⚠️ KEY RISK")), "⚠️ KEY RISK: Market volatility")
-            action = next((l for l in lines if l.startswith("💡 ACTION")), "💡 ACTION: Monitor")
-            
-            # Color-coded card
-            color = "green" if "BUY" in verdict else "orange" if "HOLD" in verdict else "red"
-            bg_color = "#f0fff0" if "BUY" in verdict else "#fffaf0" if "HOLD" in verdict else "#fff0f0"
-            
-            st.markdown(f"""
+        # Color-coded card
+        color = "green" if "BUY" in verdict else "orange" if "HOLD" in verdict else "red"
+        bg_color = "#f0fff0" if "BUY" in verdict else "#fffaf0" if "HOLD" in verdict else "#fff0f0"
+        
+        # Fixed: Properly formatted f-string (no indentation)
+        st.markdown(f"""
 <div style="background: {bg_color}; border: 2px solid {color}; border-radius: 10px; padding: 15px; margin: 10px 0;">
     <div style="display: flex; justify-content: space-between; align-items: center;">
         <h4 style="color: #333; margin: 0;">{opp['stock']} - S${opp['price']:.2f}</h4>
