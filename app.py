@@ -88,4 +88,68 @@ if st.button("🔍 Scan STI Stocks Now"):
         current_price, close_prices = get_stock_data(stock)
         if current_price and close_prices and len(close_prices) >= 2:
             ma_50 = calculate_50_day_ma(close_prices)
-            below_ma_pct = round(((ma_50 - current_price) / ma_50) * 100,
+            below_ma_pct = round(((ma_50 - current_price) / ma_50) * 100, 1)
+            
+            # Check for dip (below 50-MA)
+            if current_price < ma_50:
+                # Get news summary
+                try:
+                    stock_obj = yf.Ticker(stock)
+                    news = stock_obj.news
+                    news_summary = " | ".join([item['title'] for item in news[:3]]) if news else "No recent news"
+                except:
+                    news_summary = "News unavailable"
+                
+                # Get guru analysis
+                analysis = guru_analysis(stock, current_price, below_ma_pct, news_summary)
+                
+                dip_opportunities.append({
+                    'stock': stock,
+                    'price': current_price,
+                    'ma_50': ma_50,
+                    'below_ma': below_ma_pct,
+                    'analysis': analysis
+                })
+        
+        progress_bar.progress((i + 1) / len(STI_STOCKS))
+        time.sleep(1.5)  # Be gentle with Yahoo's servers
+    
+    # Display results
+    st.subheader("🚀 Top Dip Opportunities")
+    
+    if not dip_opportunities:
+        st.info("No stocks found below 50-day moving average. Try again later!")
+    else:
+        # Sort by how far below MA (largest discount first)
+        sorted_opps = sorted(dip_opportunities, key=lambda x: x['below_ma'], reverse=True)
+        
+        for opp in sorted_opps:
+            # Parse guru analysis
+            lines = opp['analysis'].split('\n')
+            verdict = next((l for l in lines if l.startswith("✅ VERDICT")), "✅ VERDICT: HOLD")
+            target = next((l for l in lines if l.startswith("🎯 1-WEEK TARGET")), "🎯 1-WEEK TARGET: N/A")
+            risk = next((l for l in lines if l.startswith("⚠️ KEY RISK")), "⚠️ KEY RISK: Market volatility")
+            action = next((l for l in lines if l.startswith("💡 ACTION")), "💡 ACTION: Monitor")
+            
+            # Color-coded card
+            if "BUY" in verdict:
+                color = "green"
+                bg_color = "#f0fff0"
+            elif "HOLD" in verdict:
+                color = "orange"
+                bg_color = "#fffaf0"
+            else:
+                color = "red"
+                bg_color = "#fff0f0"
+            
+            st.markdown(f"""
+            <div style="background: {bg_color}; border: 2px solid {color}; border-radius: 10px; padding: 15px; margin: 10px 0;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h4 style="color: #333; margin: 0;">{opp['stock']} - S${opp['price']:.2f}</h4>
+                    <span style="background: {color}; color: white; padding: 3px 8px; border-radius: 12px; font-size: 0.9em;">
+                        🔻{opp['below_ma']}%
+                    </span>
+                </div>
+                <p style="color: {color}; font-weight: bold; margin: 8px 0;">{verdict}</p>
+                <p style="margin: 5px 0;">{target}</p>
+                <p style="margin: 5px 0;">
