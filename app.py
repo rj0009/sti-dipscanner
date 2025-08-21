@@ -4,6 +4,8 @@ import pandas as pd
 from datetime import datetime, timedelta
 import time
 import os
+import requests
+import random
 
 # Configuration
 GROQ_KEY = os.getenv("GROQ_KEY", "your_groq_key_here")
@@ -18,18 +20,42 @@ STI_STOCKS = [
 ]
 
 def get_stock_data(ticker):
-    """Fetch data using yfinance with error handling"""
+    """Fetch data using yfinance with enhanced error handling and retries"""
+    # Add random delay to avoid rate limiting
+    time.sleep(random.uniform(1.0, 2.0))
+    
     try:
-        stock = yf.Ticker(ticker)
-        # Get 50-day history for MA calculation
-        hist = stock.history(period="50d")
-        if len(hist) < 2 or hist['Close'].isna().all():
-            return None, None
-        # Get current price (last close)
-        current_price = hist['Close'].iloc[-1]
-        return current_price, hist['Close'].tolist()
+        # Create session with headers to mimic browser request
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        })
+        
+        # Try multiple times with increasing delays
+        for attempt in range(3):
+            try:
+                stock = yf.Ticker(ticker, session=session)
+                # Get 50-day history for MA calculation
+                hist = stock.history(period="50d", interval="1d")
+                
+                if hist.empty or len(hist) < 2:
+                    if attempt < 2:  # Don't sleep on last attempt
+                        time.sleep(2 ** attempt)  # Exponential backoff
+                    continue
+                    
+                # Get current price (last close)
+                current_price = hist['Close'].iloc[-1]
+                return current_price, hist['Close'].tolist()
+                
+            except Exception as e:
+                if attempt < 2:  # Don't sleep on last attempt
+                    time.sleep(2 ** attempt)
+                continue
+                
     except Exception as e:
         return None, None
+        
+    return None, None
 
 def calculate_50_day_ma(prices):
     """Calculate 50-day moving average"""
@@ -81,6 +107,7 @@ if st.button("🔍 Scan STI Stocks Now"):
     status_text = st.empty()
     
     dip_opportunities = []
+    failed_tickers = []
     
     for i, stock in enumerate(STI_STOCKS):
         status_text.text(f"Scanning {stock} ({i+1}/{len(STI_STOCKS)})")
@@ -110,6 +137,8 @@ if st.button("🔍 Scan STI Stocks Now"):
                     'below_ma': below_ma_pct,
                     'analysis': analysis
                 })
+        else:
+            failed_tickers.append(stock)
         
         progress_bar.progress((i + 1) / len(STI_STOCKS))
         time.sleep(1.5)  # Be gentle with Yahoo's servers
@@ -119,24 +148,27 @@ if st.button("🔍 Scan STI Stocks Now"):
     
     if not dip_opportunities:
         st.info("No stocks found below 50-day moving average. Try again later!")
-    else:
-        # Sort by how far below MA (largest discount first)
-        sorted_opportunities = sorted(dip_opportunities, key=lambda x: x['below_ma'], reverse=True)
+    
+    # Show failed tickers for debugging
+    if failed_tickers:
+        with st.expander("🔍 Debug: Failed Tickers"):
+            st.write(f"Failed to retrieve data for: {', '.join(failed_tickers)}")
+            st.write("This is often temporary - try again in a few minutes.")
+    
+    for opp in dip_opportunities:
+        # Parse guru analysis
+        lines = opp['analysis'].split('\n')
+        verdict = next((l for l in lines if l.startswith("✅ VERDICT")), "✅ VERDICT: HOLD")
+        target = next((l for l in lines if l.startswith("🎯 1-WEEK TARGET")), "🎯 1-WEEK TARGET: N/A")
+        risk = next((l for l in lines if l.startswith("⚠️ KEY RISK")), "⚠️ KEY RISK: Market volatility")
+        action = next((l for l in lines if l.startswith("💡 ACTION")), "💡 ACTION: Monitor")
         
-        for opp in sorted_opportunities:
-            # Parse guru analysis
-            lines = opp['analysis'].split('\n')
-            verdict = next((l for l in lines if l.startswith("✅ VERDICT")), "✅ VERDICT: HOLD")
-            target = next((l for l in lines if l.startswith("🎯 1-WEEK TARGET")), "🎯 1-WEEK TARGET: N/A")
-            risk = next((l for l in lines if l.startswith("⚠️ KEY RISK")), "⚠️ KEY RISK: Market volatility")
-            action = next((l for l in lines if l.startswith("💡 ACTION")), "💡 ACTION: Monitor")
-            
-            # Color-coded card
-            color = "green" if "BUY" in verdict else "orange" if "HOLD" in verdict else "red"
-            bg_color = "#f0fff0" if "BUY" in verdict else "#fffaf0" if "HOLD" in verdict else "#fff0f0"
-            
-            # Fixed: Properly formatted f-string (no indentation)
-            st.markdown(f"""
+        # Color-coded card
+        color = "green" if "BUY" in verdict else "orange" if "HOLD" in verdict else "red"
+        bg_color = "#f0fff0" if "BUY" in verdict else "#fffaf0" if "HOLD" in verdict else "#fff0f0"
+        
+        # Fixed: Properly formatted f-string (no indentation)
+        st.markdown(f"""
 <div style="background: {bg_color}; border: 2px solid {color}; border-radius: 10px; padding: 15px; margin: 10px 0;">
     <div style="display: flex; justify-content: space-between; align-items: center;">
         <h4 style="color: #333; margin: 0;">{opp['stock']} - S${opp['price']:.2f}</h4>
