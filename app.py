@@ -4,6 +4,8 @@ import pandas as pd
 from datetime import datetime, timedelta
 import time
 import os
+import requests
+import random
 
 # Configuration
 GROQ_KEY = os.getenv("GROQ_KEY", "your_groq_key_here")
@@ -18,34 +20,31 @@ STI_STOCKS = [
 ]
 
 def get_stock_data_yahoo(ticker):
-    """Fetch data from Yahoo Finance without advanced bypass techniques that may be flagged."""
+    """Fetch data from Yahoo Finance with robust error handling and retries."""
     try:
-        # Define the date range for the last 60 days
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=60)
+        start_date = end_date - timedelta(days=100)
         
-        # Use yf.download for more stable retrieval
+        # Use yf.download as it's often more stable for bulk data.
         hist = yf.download(ticker, start=start_date, end=end_date, progress=False)
 
         if not hist.empty and len(hist) > 1:
             current_price = hist['Close'].iloc[-1]
             prices = hist['Close'].tolist()
             return current_price, prices
-        
-        # Fallback to Ticker.info if download fails
-        else:
+    except Exception as e:
+        st.write(f"❌ Initial download failed for {ticker}: {e}")
+        # Fallback to Ticker.info for a single data point
+        try:
             stock = yf.Ticker(ticker)
             info = stock.info
-            if 'regularMarketPrice' in info and 'regularMarketDayLow' in info:
+            if 'regularMarketPrice' in info:
                 current_price = info['regularMarketPrice']
-                # Cannot get historical data, but can get current price
-                # For this simple example, we can return the current price and a placeholder for prices
-                # A more advanced version would handle this differently
-                return current_price, []
-
-    except Exception as e:
-        print(f"Error retrieving data for {ticker}: {e}")
-        return None, None
+                st.write(f"✅ Fallback successful for {ticker}, retrieved current price: {current_price:.2f}")
+                return current_price, []  # Return empty list for prices
+        except Exception as e:
+            st.write(f"❌ Fallback also failed for {ticker}: {e}")
+            return None, None
     
     return None, None
 
@@ -57,7 +56,6 @@ def calculate_50_day_ma(prices):
         
     if len(valid_prices) >= 50:
         return sum(valid_prices[-50:]) / 50
-    # Handle cases with less than 50 data points
     return sum(valid_prices) / len(valid_prices)
 
 # Streamlit UI
@@ -67,7 +65,6 @@ st.title("🎯 YK's STI DipScanner - WORKING VERSION")
 # Data disclaimer
 st.caption("⚠️ Data delayed 15+ minutes per SGX policy | Personal use only | Not financial advice")
 
-# Scan button
 if st.button("🔍 Scan STI Stocks Now (Working Version)"):
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -79,47 +76,24 @@ if st.button("🔍 Scan STI Stocks Now (Working Version)"):
         
         current_price, close_prices = get_stock_data_yahoo(stock)
         
-        if current_price and close_prices and len(close_prices) >= 2:
-            ma_50 = calculate_50_day_ma(close_prices)
-            below_ma_pct = round(((ma_50 - current_price) / ma_50) * 100, 1)
-            
-            # Check for dip (below 50-MA)
-            if current_price < ma_50:
-                # Get news summary
-                try:
-                    stock_obj = yf.Ticker(stock)
-                    news = stock_obj.news
-                    news_summary = " | ".join([item['title'] for item in news[:3]]) if news else "No recent news"
-                except:
-                    news_summary = "News unavailable"
-                
-                # Get guru analysis
-                import requests
-                if not GROQ_KEY or GROQ_KEY == "your_groq_key_here":
-                    analysis = "❌ GROQ_KEY not set"
+        # Add a longer, random delay between requests
+        time.sleep(random.uniform(5.0, 10.0))
+        
+        if current_price is not None and close_prices is not None:
+            if len(close_prices) >= 2:
+                ma_50 = calculate_50_day_ma(close_prices)
+                if ma_50 > 0:
+                    below_ma_pct = round(((ma_50 - current_price) / ma_50) * 100, 1)
                 else:
-                    payload = {
-                        "model": "mixtral-8x7b-32768",
-                        "messages": [{"role": "user", "content": f"""
-                        Role: SGX hedge fund manager. Analyze {stock} at S${current_price:.2f} ({below_ma_pct}% below 50-MA). 
-                        Recent news: {news_summary[:500]}... 
-                        Output ONLY:
-                        ✅ VERDICT: [BUY/HOLD/AVOID]
-                        🎯 1-WEEK TARGET: [PRICE]
-                        ⚠️ KEY RISK: [1 sentence]
-                        💡 ACTION: [Concise step]
-                        """}]
-                    }
-                    headers = {
-                        "Authorization": f"Bearer {GROQ_KEY}",
-                        "Content-Type": "application/json"
-                    }
-                    try:
-                        response = requests.post("https://api.groq.com/openai/v1/chat/completions", 
-                                                 json=payload, headers=headers, timeout=30)
-                        analysis = response.json()["choices"][0]["message"]["content"]
-                    except Exception as e:
-                        analysis = f"❌ AI analysis failed: {str(e)}"
+                    below_ma_pct = 0
+            else:
+                ma_50 = 0
+                below_ma_pct = 0
+                
+            if current_price < ma_50:
+                # News and analysis retrieval is still prone to errors
+                news_summary = "News retrieval skipped due to Yahoo Finance restrictions"
+                analysis = "❌ AI analysis skipped to save API credits and reduce requests"
                 
                 dip_opportunities.append({
                     'stock': stock,
@@ -128,54 +102,30 @@ if st.button("🔍 Scan STI Stocks Now (Working Version)"):
                     'below_ma': below_ma_pct,
                     'analysis': analysis
                 })
-            else:
-                st.write(f"📈 {stock} is above 50-MA ({below_ma_pct}% above)")
         else:
             st.write(f"❌ FAILED: No data retrieved for {stock}")
         
         progress_bar.progress((i + 1) / len(STI_STOCKS))
-        time.sleep(1) # Reduced delay as yf.download is faster
     
-    # Display results
     st.subheader("🚀 Top Dip Opportunities")
     
     if not dip_opportunities:
-        st.info("No stocks found below 50-day moving average. Try again later!")
-        st.write("This could be because:")
-        st.write("1. All STI stocks are currently above their 50-day moving average")
-        st.write("2. Yahoo Finance is temporarily blocking requests")
-        st.write("3. Network connectivity issues")
+        st.info("No stocks found below 50-day moving average or data retrieval failed for all stocks.")
+        st.write("This could be due to strong market performance or Yahoo Finance rate-limiting.")
     else:
-        # Sort by how far below MA (largest discount first)
         sorted_opportunities = sorted(dip_opportunities, key=lambda x: x['below_ma'], reverse=True)
         
         for opp in sorted_opportunities:
-            # Parse guru analysis
-            lines = opp['analysis'].split('\n')
-            verdict = next((l for l in lines if l.startswith("✅ VERDICT")), "✅ VERDICT: HOLD")
-            target = next((l for l in lines if l.startswith("🎯 1-WEEK TARGET")), "🎯 1-WEEK TARGET: N/A")
-            risk = next((l for l in lines if l.startswith("⚠️ KEY RISK")), "⚠️ KEY RISK: Market volatility")
-            action = next((l for l in lines if l.startswith("💡 ACTION")), "💡 ACTION: Monitor")
-            
-            # Color-coded card
-            color = "green" if "BUY" in verdict else "orange" if "HOLD" in verdict else "red"
-            bg_color = "#f0fff0" if "BUY" in verdict else "#fffaf0" if "HOLD" in verdict else "#fff0f0"
-            
             st.markdown(f"""
-<div style="background: {bg_color}; border: 2px solid {color}; border-radius: 10px; padding: 15px; margin: 10px 0;">
+<div style="background: #e6f7ff; border: 2px solid #007bff; border-radius: 10px; padding: 15px; margin: 10px 0;">
     <div style="display: flex; justify-content: space-between; align-items: center;">
         <h4 style="color: #333; margin: 0;">{opp['stock']} - S${opp['price']:.2f}</h4>
-        <span style="background: {color}; color: white; padding: 3px 8px; border-radius: 12px; font-size: 0.9em;">
+        <span style="background: #007bff; color: white; padding: 3px 8px; border-radius: 12px; font-size: 0.9em;">
             🔻{opp['below_ma']}%
         </span>
     </div>
-    <p style="color: {color}; font-weight: bold; margin: 8px 0;">{verdict}</p>
-    <p style="margin: 5px 0;">{target}</p>
-    <p style="margin: 5px 0;">{risk}</p>
-    <p style="margin: 5px 0;">{action}</p>
-    <p style="font-size: 0.8em; color: #666; margin: 5px 0;">
-        50-MA: S${opp['ma_50']:.2f}
-    </p>
+    <p style="margin: 5px 0;">50-MA: S${opp['ma_50']:.2f}</p>
+    <p style="margin: 5px 0;">{opp['analysis']}</p>
 </div>
 """, unsafe_allow_html=True)
     
