@@ -4,9 +4,6 @@ import pandas as pd
 from datetime import datetime, timedelta
 import time
 import os
-import requests
-from fake_useragent import UserAgent
-import random
 
 # Configuration
 GROQ_KEY = os.getenv("GROQ_KEY", "your_groq_key_here")
@@ -20,77 +17,37 @@ STI_STOCKS = [
     "GK8.SI", "S59.SI", "Z78.SI", "NS8U.SI", "5FP.SI"
 ]
 
-# Initialize fake user agent
-ua = UserAgent()
-
-def get_yahoo_session():
-    """Create a session with rotating user agents"""
-    session = requests.Session()
-    
-    # Use multiple realistic user agents to avoid detection
-    user_agents = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/115.0'
-    ]
-    
-    # Random user agent
-    session.headers.update({
-        'User-Agent': random.choice(user_agents),
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Cache-Control': 'max-age=0'
-    })
-    
-    return session
-
 def get_stock_data_yahoo(ticker):
-    """Fetch data from Yahoo Finance with advanced bypass techniques"""
+    """Fetch data from Yahoo Finance without advanced bypass techniques that may be flagged."""
     try:
-        # Add delay to avoid rate limiting
-        time.sleep(random.uniform(1.0, 2.0))
+        # Define the date range for the last 60 days
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=60)
         
-        # Create session with rotating user agents
-        session = get_yahoo_session()
+        # Use yf.download for more stable retrieval
+        hist = yf.download(ticker, start=start_date, end=end_date, progress=False)
+
+        if not hist.empty and len(hist) > 1:
+            current_price = hist['Close'].iloc[-1]
+            prices = hist['Close'].tolist()
+            return current_price, prices
         
-        # Create ticker with session
-        stock = yf.Ticker(ticker, session=session)
-        
-        # Try multiple approaches with different periods
-        periods_to_try = ["50d", "60d", "100d"]
-        for period in periods_to_try:
-            try:
-                hist = stock.history(period=period, interval="1d", prepost=False)
-                
-                if not hist.empty and len(hist) >= 2:
-                    current_price = hist['Close'].iloc[-1]
-                    prices = hist['Close'].tolist()
-                    return current_price, prices
-            except Exception as e:
-                continue  # Try next period
-                
-        # If all periods fail, try alternative approach
-        try:
-            # Try to get basic info first
+        # Fallback to Ticker.info if download fails
+        else:
+            stock = yf.Ticker(ticker)
             info = stock.info
-            if info and 'regularMarketPrice' in info:
-                # This is a fallback - we'd need to get historical data separately
-                pass
-        except:
-            pass
-            
-        return None, None
-            
+            if 'regularMarketPrice' in info and 'regularMarketDayLow' in info:
+                current_price = info['regularMarketPrice']
+                # Cannot get historical data, but can get current price
+                # For this simple example, we can return the current price and a placeholder for prices
+                # A more advanced version would handle this differently
+                return current_price, []
+
     except Exception as e:
+        print(f"Error retrieving data for {ticker}: {e}")
         return None, None
+    
+    return None, None
 
 def calculate_50_day_ma(prices):
     """Calculate 50-day moving average"""
@@ -100,6 +57,7 @@ def calculate_50_day_ma(prices):
         
     if len(valid_prices) >= 50:
         return sum(valid_prices[-50:]) / 50
+    # Handle cases with less than 50 data points
     return sum(valid_prices) / len(valid_prices)
 
 # Streamlit UI
@@ -158,7 +116,7 @@ if st.button("🔍 Scan STI Stocks Now (Working Version)"):
                     }
                     try:
                         response = requests.post("https://api.groq.com/openai/v1/chat/completions", 
-                                               json=payload, headers=headers, timeout=30)
+                                                 json=payload, headers=headers, timeout=30)
                         analysis = response.json()["choices"][0]["message"]["content"]
                     except Exception as e:
                         analysis = f"❌ AI analysis failed: {str(e)}"
@@ -176,7 +134,7 @@ if st.button("🔍 Scan STI Stocks Now (Working Version)"):
             st.write(f"❌ FAILED: No data retrieved for {stock}")
         
         progress_bar.progress((i + 1) / len(STI_STOCKS))
-        time.sleep(2)  # Increased delay to avoid blocking
+        time.sleep(1) # Reduced delay as yf.download is faster
     
     # Display results
     st.subheader("🚀 Top Dip Opportunities")
@@ -187,7 +145,6 @@ if st.button("🔍 Scan STI Stocks Now (Working Version)"):
         st.write("1. All STI stocks are currently above their 50-day moving average")
         st.write("2. Yahoo Finance is temporarily blocking requests")
         st.write("3. Network connectivity issues")
-        st.write("4. Your current network is being flagged by Yahoo Finance")
     else:
         # Sort by how far below MA (largest discount first)
         sorted_opportunities = sorted(dip_opportunities, key=lambda x: x['below_ma'], reverse=True)
