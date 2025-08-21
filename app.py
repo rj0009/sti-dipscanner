@@ -121,9 +121,9 @@ if st.button("🔍 Scan STI Stocks Now"):
         st.info("No stocks found below 50-day moving average. Try again later!")
     else:
         # Sort by how far below MA (largest discount first)
-        sorted_opps = sorted(dip_opportunities, key=lambda x: x['below_ma'], reverse=True)
+        sorted_opportunities = sorted(dip_opportunities, key=lambda x: x['below_ma'], reverse=True)
         
-        for opp in sorted_opps:
+        for opp in sorted_opportunities:
             # Parse guru analysis
             lines = opp['analysis'].split('\n')
             verdict = next((l for l in lines if l.startswith("✅ VERDICT")), "✅ VERDICT: HOLD")
@@ -132,24 +132,31 @@ if st.button("🔍 Scan STI Stocks Now"):
             action = next((l for l in lines if l.startswith("💡 ACTION")), "💡 ACTION: Monitor")
             
             # Color-coded card
-            if "BUY" in verdict:
-                color = "green"
-                bg_color = "#f0fff0"
-            elif "HOLD" in verdict:
-                color = "orange"
-                bg_color = "#fffaf0"
-            else:
-                color = "red"
-                bg_color = "#fff0f0"
+            color = "green" if "BUY" in verdict else "orange" if "HOLD" in verdict else "red"
+            bg_color = "#f0fff0" if "BUY" in verdict else "#fffaf0" if "HOLD" in verdict else "#fff0f0"
             
+            # Fixed: Properly formatted f-string (no indentation)
             st.markdown(f"""
-            <div style="background: {bg_color}; border: 2px solid {color}; border-radius: 10px; padding: 15px; margin: 10px 0;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <h4 style="color: #333; margin: 0;">{opp['stock']} - S${opp['price']:.2f}</h4>
-                    <span style="background: {color}; color: white; padding: 3px 8px; border-radius: 12px; font-size: 0.9em;">
-                        🔻{opp['below_ma']}%
-                    </span>
-                </div>
-                <p style="color: {color}; font-weight: bold; margin: 8px 0;">{verdict}</p>
-                <p style="margin: 5px 0;">{target}</p>
-                <p style="margin: 5px 0;">
+<div style="background: {bg_color}; border: 2px solid {color}; border-radius: 10px; padding: 15px; margin: 10px 0;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h4 style="color: #333; margin: 0;">{opp['stock']} - S${opp['price']:.2f}</h4>
+        <span style="background: {color}; color: white; padding: 3px 8px; border-radius: 12px; font-size: 0.9em;">
+            🔻{opp['below_ma']}%
+        </span>
+    </div>
+    <p style="color: {color}; font-weight: bold; margin: 8px 0;">{verdict}</p>
+    <p style="margin: 5px 0;">{target}</p>
+    <p style="margin: 5px 0;">{risk}</p>
+    <p style="margin: 5px 0;">{action}</p>
+    <p style="font-size: 0.8em; color: #666; margin: 5px 0;">
+        50-MA: S${opp['ma_50']:.2f}
+    </p>
+</div>
+""", unsafe_allow_html=True)
+    
+    status_text.text(f"Scan complete! Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    st.caption("💡 Tip: Refresh during SGX trading hours (9am-5pm SGT) for latest data")
+
+# Footer
+st.markdown("---")
+st.markdown("📌 **How it works**: Scans all 30 STI stocks for 50-day MA breaches → Uses Groq AI for trading advice → Presents Netflix-style recommendations")
