@@ -57,7 +57,7 @@ def get_gemini_stock_data(ticker, company_name):
         genai.configure(api_key=GEMINI_API_KEY)
         
         # Use the correct model name for Gemini API
-        model = genai.GenerativeModel('gemini-pro')  # Changed from 'gemini-pro' to proper reference
+        model = genai.GenerativeModel('gemini-1.5-pro-latest')  # Updated model name
         
         # Ask Gemini to generate realistic stock data for this company
         prompt = f"""
