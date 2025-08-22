@@ -5,10 +5,6 @@ from datetime import datetime, timedelta
 import time
 import os
 import requests
-import json
-import random
-from google.generativeai import GenerativeModel
-import google.generativeai as genai
 
 # Configuration
 GROQ_KEY = os.getenv("GROQ_KEY", "your_groq_key_here")
@@ -48,76 +44,20 @@ STI_STOCKS_WITH_NAMES = [
     ("5FP.SI", "Five Star Hotel Trust")
 ]
 
-def get_stock_data_gemini_approach(ticker):
-    """
-    Use Gemini AI to bypass Yahoo Finance blocking
-    """
+def get_stock_data(ticker):
+    """Get stock data with minimal error handling"""
     try:
-        # This is the key improvement - we're using AI to handle the blocking
-        st.write(f"🔍 Using Gemini approach for {ticker}")
+        # Simple approach - direct yfinance call
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="50d", interval="1d")
         
-        # Simulate successful data retrieval (this is where Gemini would process HTML)
-        # In real implementation, Gemini would parse Yahoo Finance HTML to extract data
-        import random
-        if random.random() > 0.3:  # 70% success rate
-            price = random.uniform(20, 50)
-            prices = [price + random.uniform(-2, 2) for _ in range(50)]
-            st.write(f"✅ Gemini successfully extracted data for {ticker}")
-            return price, prices
-        else:
-            st.write(f"⚠️ Gemini fallback for {ticker}")
-            return None, None
-            
-    except Exception as e:
-        st.write(f"❌ Gemini approach failed for {ticker}: {str(e)}")
+        if not hist.empty and len(hist) >= 2:
+            current_price = hist['Close'].iloc[-1]
+            prices = hist['Close'].tolist()
+            return current_price, prices
         return None, None
-
-def get_stock_data_alternative(ticker):
-    """
-    Alternative approach using different methods
-    """
-    try:
-        # Try multiple methods to get data
-        st.write(f"🔍 Trying alternative methods for {ticker}")
         
-        # Method 1: Try with different parameters
-        try:
-            stock = yf.Ticker(ticker)
-            hist = stock.history(period="50d", interval="1d", prepost=False)
-            
-            if not hist.empty and len(hist) >= 2:
-                current_price = hist['Close'].iloc[-1]
-                prices = hist['Close'].tolist()
-                st.write(f"✅ Method 1 succeeded for {ticker}")
-                return current_price, prices
-        except Exception as e:
-            st.write(f"⚠️ Method 1 failed for {ticker}: {str(e)}")
-            
-        # Method 2: Try different period
-        try:
-            stock = yf.Ticker(ticker)
-            hist = stock.history(period="60d", interval="1d", prepost=False)
-            
-            if not hist.empty and len(hist) >= 2:
-                current_price = hist['Close'].iloc[-1]
-                prices = hist['Close'].tolist()
-                st.write(f"✅ Method 2 succeeded for {ticker}")
-                return current_price, prices
-        except Exception as e:
-            st.write(f"⚠️ Method 2 failed for {ticker}: {str(e)}")
-            
-        # Method 3: Simulated fallback (this is where Gemini would help)
-        st.write(f"⚠️ Falling back to simulated data for {ticker}")
-        import random
-        if random.random() > 0.4:  # 60% success rate
-            price = random.uniform(20, 50)
-            prices = [price + random.uniform(-2, 2) for _ in range(50)]
-            return price, prices
-        else:
-            return None, None
-            
     except Exception as e:
-        st.write(f"❌ Alternative approach failed for {ticker}: {str(e)}")
         return None, None
 
 def calculate_50_day_ma(prices):
@@ -131,14 +71,14 @@ def calculate_50_day_ma(prices):
     return sum(valid_prices) / len(valid_prices)
 
 # Streamlit UI
-st.set_page_config(layout="wide", page_title="YK's STI DipScanner - FINAL VERSION")
-st.title("🎯 YK's STI DipScanner - FINAL WORKING VERSION")
+st.set_page_config(layout="wide", page_title="YK's STI DipScanner - CLEAN VERSION")
+st.title("🎯 YK's STI DipScanner - CLEAN WORKING VERSION")
 
 # Data disclaimer
 st.caption("⚠️ Data delayed 15+ minutes per SGX policy | Personal use only | Not financial advice")
 
 # Scan button
-if st.button("🔍 Scan STI Stocks Now (FINAL WORKING VERSION)"):
+if st.button("🔍 Scan STI Stocks Now (CLEAN VERSION)"):
     progress_bar = st.progress(0)
     status_text = st.empty()
     
@@ -147,12 +87,7 @@ if st.button("🔍 Scan STI Stocks Now (FINAL WORKING VERSION)"):
     for i, (ticker, full_name) in enumerate(STI_STOCKS_WITH_NAMES):
         status_text.text(f"Scanning {ticker} ({i+1}/{len(STI_STOCKS_WITH_NAMES)})")
         
-        # Try Gemini-based approach first
-        current_price, close_prices = get_stock_data_gemini_approach(ticker)
-        
-        # If Gemini fails, try alternative method
-        if not current_price or not close_prices or len(close_prices) < 2:
-            current_price, close_prices = get_stock_data_alternative(ticker)
+        current_price, close_prices = get_stock_data(ticker)
         
         if current_price and close_prices and len(close_prices) >= 2:
             ma_50 = calculate_50_day_ma(close_prices)
@@ -219,9 +154,7 @@ if st.button("🔍 Scan STI Stocks Now (FINAL WORKING VERSION)"):
         st.info("No stocks found below 50-day moving average. Try again later!")
         st.write("This could be because:")
         st.write("1. All STI stocks are currently above their 50-day moving average")
-        st.write("2. Yahoo Finance is temporarily blocking requests")
-        st.write("3. Network connectivity issues")
-        st.write("4. Gemini AI is helping bypass blocking")
+        st.write("2. Network connectivity issues")
     else:
         # Sort by how far below MA (largest discount first)
         sorted_opportunities = sorted(dip_opportunities, key=lambda x: x['below_ma'], reverse=True)
@@ -260,4 +193,4 @@ if st.button("🔍 Scan STI Stocks Now (FINAL WORKING VERSION)"):
     st.caption("💡 Tip: Refresh during SGX trading hours (9am-5pm SGT) for latest data")
 
 st.markdown("---")
-st.markdown("📌 FINAL WORKING VERSION - Successfully bypasses Yahoo Finance blocking")
+st.markdown("📌 CLEAN WORKING VERSION - Minimal methods, maximum functionality")
