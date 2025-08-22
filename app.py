@@ -130,13 +130,6 @@ def calculate_50_day_ma(prices):
         return sum(valid_prices[-50:]) / 50
     return sum(valid_prices) / len(valid_prices)
 
-def get_stock_name(ticker):
-    """Get full stock name from ticker"""
-    for t, name in STI_STOCKS_WITH_NAMES:
-        if t == ticker:
-            return name
-    return ticker  # Fallback to ticker if not found
-
 # Streamlit UI
 st.set_page_config(layout="wide", page_title="YK's STI DipScanner - FINAL VERSION")
 st.title("🎯 YK's STI DipScanner - FINAL WORKING VERSION")
